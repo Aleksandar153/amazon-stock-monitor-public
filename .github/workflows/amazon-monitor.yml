@@ -1,0 +1,72 @@
+
+name: Amazon Stock Monitor
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-stock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+
+      - name: Restore previous stock state
+        run: |
+          git fetch origin state:state || true
+
+          if git show-ref --verify --quiet refs/heads/state; then
+            git show state:stock_state.json > stock_state.json || true
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests playwright
+
+      - name: Install Chromium
+        run: |
+          playwright install chromium --with-deps
+
+      - name: Check Amazon availability
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python amazon_checker.py
+
+      - name: Save stock state
+        run: |
+          cp stock_state.json /tmp/stock_state.json
+
+          rm -f stock_state.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git show-ref --verify --quiet refs/heads/state; then
+            git checkout state
+          else
+            git checkout --orphan state
+            git rm -rf . || true
+          fi
+
+          cp /tmp/stock_state.json stock_state.json
+
+          git add stock_state.json
+
+          if git diff --cached --quiet; then
+            echo "Stock state has not changed."
+          else
+            git commit -m "Update Amazon stock state"
+            git push origin state
+          fi
